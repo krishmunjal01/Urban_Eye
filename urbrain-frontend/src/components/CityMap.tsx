@@ -1,6 +1,6 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import Map from 'react-map-gl/maplibre';
-import { Maximize2, X } from 'lucide-react';
+import { Maximize2, X, ChevronLeft, ChevronRight } from 'lucide-react';
 import DeckGL from '@deck.gl/react';
 import { WebMercatorViewport } from '@deck.gl/core';
 import { IconLayer, PathLayer, ScatterplotLayer } from '@deck.gl/layers';
@@ -13,22 +13,169 @@ import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
 // Fix for Vite production build Web Worker issues
 setWorkerUrl(workerUrl);
 
-
 // Free light basemap from CartoDB (no API key required)
 const MAP_STYLE = 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json';
 
-// Removed SECTORS array as it is no longer used for PolygonLayer
-
-// Removed local INITIAL_VIEW_STATE in favor of global store
-
-// SVG string for the navigation arrow (Google Maps style)
+// High-tech 2D Bus Icon (crisp vehicle glyph with directional pulse halo)
 const NAV_ICON_SVG = `
 <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
-  <circle cx="32" cy="32" r="28" fill="rgba(59, 130, 246, 0.15)" stroke="rgba(59, 130, 246, 0.5)" stroke-width="2"/>
-  <path d="M32 14 L48 46 L32 38 L16 46 Z" fill="#3b82f6" stroke="white" stroke-width="2" stroke-linejoin="round"/>
+  <circle cx="32" cy="32" r="26" fill="rgba(15, 82, 186, 0.18)" stroke="#0F52BA" stroke-width="1.5" stroke-dasharray="3,3"/>
+  <circle cx="32" cy="32" r="16" fill="#0F52BA" stroke="white" stroke-width="2"/>
+  <path d="M32 18 L40 38 L32 34 L24 38 Z" fill="white"/>
 </svg>
 `;
 const NAV_ICON_URL = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(NAV_ICON_SVG)}`;
+
+export type BuildingTheme = 'smoked-glass' | 'slate-architectural' | 'cyber-cyan' | 'pure-satellite';
+
+export const BUILDING_THEMES: Record<BuildingTheme, {
+  name: string;
+  badge: string;
+  fillColor: any;
+  opacity: number;
+  height: any;
+  outlineColor: string;
+  outlineWidth: number;
+  outlineOpacity: number;
+  lightColor: string;
+  lightIntensity: number;
+}> = {
+  'smoked-glass': {
+    name: 'Smoked Glass',
+    badge: '💎 Smoked Glass',
+    fillColor: [
+      'interpolate',
+      ['linear'],
+      [
+        'case',
+        ['has', 'height'], ['to-number', ['get', 'height'], 8.5],
+        ['has', 'render_height'], ['to-number', ['get', 'render_height'], 8.5],
+        ['has', 'levels'], ['*', ['to-number', ['get', 'levels'], 2], 3.5],
+        8.5
+      ],
+      0, '#0F172A',   // Street foundation: Deep obsidian slate
+      8, '#1E293B',   // Residential (1-2 stories): Sleek smoked graphite glass
+      14, '#334155',  // Commercial / SCO: Dark tinted architectural glass
+      22, '#0284C7'   // Civic / Hospital / Landmarks: Luminous cyan glass prism
+    ],
+    opacity: 0.76,
+    height: [
+      'case',
+      ['has', 'height'], ['to-number', ['get', 'height'], 8.5],
+      ['has', 'render_height'], ['to-number', ['get', 'render_height'], 8.5],
+      ['has', 'levels'], ['*', ['to-number', ['get', 'levels'], 2], 3.5],
+      ['==', ['get', 'kind'], 'hospital'], 24,
+      ['==', ['get', 'kind'], 'commercial'], 16,
+      ['==', ['get', 'kind'], 'retail'], 12,
+      ['==', ['get', 'kind'], 'civic'], 18,
+      ['==', ['get', 'type'], 'hospital'], 24,
+      ['==', ['get', 'type'], 'civic'], 18,
+      ['==', ['get', 'type'], 'commercial'], 16,
+      ['==', ['get', 'type'], 'retail'], 12,
+      ['==', ['get', 'type'], 'residential'], 8,
+      8.5 // Authentic Chandigarh residential scale (realistic 2-story neighborhoods)
+    ],
+    outlineColor: '#38BDF8',
+    outlineWidth: 1.0,
+    outlineOpacity: 0.55,
+    lightColor: '#E0F2FE',
+    lightIntensity: 0.90
+  },
+  'slate-architectural': {
+    name: 'Architectural Slate',
+    badge: '🏛️ Slate Stone',
+    fillColor: [
+      'interpolate',
+      ['linear'],
+      [
+        'case',
+        ['has', 'height'], ['to-number', ['get', 'height'], 8.5],
+        ['has', 'render_height'], ['to-number', ['get', 'render_height'], 8.5],
+        ['has', 'levels'], ['*', ['to-number', ['get', 'levels'], 2], 3.5],
+        8.5
+      ],
+      0, '#334155',   // Slate foundation
+      8, '#475569',   // Natural architectural concrete & granite
+      14, '#64748B',  // Modern urban stone
+      22, '#2563EB'   // Landmark glass facade
+    ],
+    opacity: 0.82,
+    height: [
+      'case',
+      ['has', 'height'], ['to-number', ['get', 'height'], 8.5],
+      ['has', 'render_height'], ['to-number', ['get', 'render_height'], 8.5],
+      ['has', 'levels'], ['*', ['to-number', ['get', 'levels'], 2], 3.5],
+      ['==', ['get', 'kind'], 'hospital'], 24,
+      ['==', ['get', 'kind'], 'commercial'], 16,
+      ['==', ['get', 'kind'], 'retail'], 12,
+      ['==', ['get', 'kind'], 'civic'], 18,
+      ['==', ['get', 'type'], 'hospital'], 24,
+      ['==', ['get', 'type'], 'civic'], 18,
+      ['==', ['get', 'type'], 'commercial'], 16,
+      ['==', ['get', 'type'], 'retail'], 12,
+      ['==', ['get', 'type'], 'residential'], 8,
+      8.5
+    ],
+    outlineColor: '#94A3B8',
+    outlineWidth: 0.9,
+    outlineOpacity: 0.45,
+    lightColor: '#FFFBEB',
+    lightIntensity: 0.92
+  },
+  'cyber-cyan': {
+    name: 'Cyber Matrix',
+    badge: '⚡ Cyber Matrix',
+    fillColor: [
+      'interpolate',
+      ['linear'],
+      [
+        'case',
+        ['has', 'height'], ['to-number', ['get', 'height'], 8.5],
+        ['has', 'render_height'], ['to-number', ['get', 'render_height'], 8.5],
+        ['has', 'levels'], ['*', ['to-number', ['get', 'levels'], 2], 3.5],
+        8.5
+      ],
+      0, '#0369A1',
+      8, '#0284C7',
+      14, '#0EA5E9',
+      22, '#38BDF8'
+    ],
+    opacity: 0.48,
+    height: [
+      'case',
+      ['has', 'height'], ['to-number', ['get', 'height'], 8.5],
+      ['has', 'render_height'], ['to-number', ['get', 'render_height'], 8.5],
+      ['has', 'levels'], ['*', ['to-number', ['get', 'levels'], 2], 3.5],
+      ['==', ['get', 'kind'], 'hospital'], 24,
+      ['==', ['get', 'kind'], 'commercial'], 16,
+      ['==', ['get', 'kind'], 'retail'], 12,
+      ['==', ['get', 'kind'], 'civic'], 18,
+      ['==', ['get', 'type'], 'hospital'], 24,
+      ['==', ['get', 'type'], 'civic'], 18,
+      ['==', ['get', 'type'], 'commercial'], 16,
+      ['==', ['get', 'type'], 'retail'], 12,
+      ['==', ['get', 'type'], 'residential'], 8,
+      8.5
+    ],
+    outlineColor: '#00F5FF',
+    outlineWidth: 1.2,
+    outlineOpacity: 0.80,
+    lightColor: '#CFFAFE',
+    lightIntensity: 0.95
+  },
+  'pure-satellite': {
+    name: 'Pure Satellite',
+    badge: '🛰️ Pure Satellite',
+    fillColor: '#000000',
+    opacity: 0,
+    height: 0,
+    outlineColor: '#0284C7',
+    outlineWidth: 0.8,
+    outlineOpacity: 0.40,
+    lightColor: '#FFFFFF',
+    lightIntensity: 0.85
+  }
+};
 
 export default function CityMap() {
   const buses = useUrbrainStore(state => state.buses);
@@ -43,64 +190,231 @@ export default function CityMap() {
   const setSelectedEvent = useUrbrainStore(state => state.setSelectedEvent);
   const [fullScreenImage, setFullScreenImage] = useState<string | null>(null);
   const [dispatchState, setDispatchState] = useState<'idle' | 'confirm' | 'loading' | 'success'>('idle');
+  const [buildingTheme, setBuildingTheme] = useState<BuildingTheme>('smoked-glass');
+  const [isStyleMenuOpen, setIsStyleMenuOpen] = useState<boolean>(true);
 
+  const mapRef = useRef<any>(null);
   const viewport = useMemo(() => new WebMercatorViewport(viewState), [viewState]);
+
+  // Synchronize building theme & architectural style to MapLibre layers
+  const applyBuildingTheme = useCallback((themeKey: BuildingTheme, is3D: boolean) => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    try {
+      if (themeKey === 'pure-satellite') {
+        if (map.getLayer('3d-buildings')) {
+          map.setLayoutProperty('3d-buildings', 'visibility', 'none');
+        }
+        if (map.getLayer('3d-buildings-outline')) {
+          map.setLayoutProperty('3d-buildings-outline', 'visibility', is3D ? 'visible' : 'none');
+          map.setPaintProperty('3d-buildings-outline', 'line-color', '#0284C7');
+          map.setPaintProperty('3d-buildings-outline', 'line-opacity', 0.40);
+          map.setPaintProperty('3d-buildings-outline', 'line-width', 0.8);
+        }
+        return;
+      }
+
+      const cfg = BUILDING_THEMES[themeKey] || BUILDING_THEMES['smoked-glass'];
+
+      if (map.getLayer('3d-buildings')) {
+        map.setLayoutProperty('3d-buildings', 'visibility', is3D ? 'visible' : 'none');
+        map.setPaintProperty('3d-buildings', 'fill-extrusion-color', cfg.fillColor);
+        map.setPaintProperty('3d-buildings', 'fill-extrusion-opacity', cfg.opacity);
+        map.setPaintProperty('3d-buildings', 'fill-extrusion-height', cfg.height);
+      }
+      if (map.getLayer('3d-buildings-outline')) {
+        map.setLayoutProperty('3d-buildings-outline', 'visibility', is3D ? 'visible' : 'none');
+        map.setPaintProperty('3d-buildings-outline', 'line-color', cfg.outlineColor);
+        map.setPaintProperty('3d-buildings-outline', 'line-opacity', cfg.outlineOpacity);
+        map.setPaintProperty('3d-buildings-outline', 'line-width', cfg.outlineWidth);
+      }
+      if (typeof map.setLight === 'function' && is3D) {
+        map.setLight({
+          anchor: 'map',
+          position: [1.5, 210, 32],
+          color: cfg.lightColor,
+          intensity: cfg.lightIntensity
+        });
+      }
+    } catch (err) {
+      console.warn('Could not dynamically update building theme:', err);
+    }
+  }, []);
+
+  // Synchronize MapLibre 3D building layers, satellite ground imagery, sky fog & sun lighting with is3DMode
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    try {
+      if (map.getLayer('satellite-layer')) {
+        map.setLayoutProperty('satellite-layer', 'visibility', is3DMode ? 'visible' : 'none');
+      }
+
+      applyBuildingTheme(buildingTheme, is3DMode);
+
+      // Atmospheric Sky Fog (eliminates harsh blank white void at tilted angles)
+      if (typeof (map as any).setFog === 'function') {
+        if (is3DMode) {
+          (map as any).setFog({
+            range: [0.5, 12],
+            color: '#d0e2ff',          // Crisp daytime atmospheric haze
+            'high-color': '#1d4ed8',    // Deep sky blue zenith
+            'space-color': '#0f172a',
+            'horizon-blend': 0.18
+          });
+        } else {
+          (map as any).setFog(null);
+        }
+      }
+
+      if (typeof map.setLight === 'function' && !is3DMode) {
+        // Soft uniform ambient lighting in 2D mode
+        map.setLight({
+          anchor: 'viewport',
+          position: [1.15, 210, 30],
+          color: '#FFFFFF',
+          intensity: 0.25
+        });
+      }
+    } catch (_) {}
+  }, [is3DMode, buildingTheme, applyBuildingTheme]);
 
   let popupX = 0;
   let popupY = 0;
   let isTopAnchor = false;
   
   if (selectedEvent) {
-    const projected = viewport.project([selectedEvent.longitude, selectedEvent.latitude]);
+    const projected = viewport.project([
+      selectedEvent.longitude, 
+      selectedEvent.latitude,
+      is3DMode ? 28 : 0
+    ]);
     popupX = projected[0];
     popupY = projected[1];
     isTopAnchor = popupY < 380;
   }
 
-  const layers: any[] = [
-    is3DMode 
-      ? new ScenegraphLayer({
-          id: 'buses-3d-layer',
-          data: buses,
-          pickable: true,
-          scenegraph: '/scene.glb',
-          getPosition: d => [d.longitude, d.latitude, 0],
-          getOrientation: d => [0, -d.heading + 180, 90], // Flipped 180 degrees so they face forward (the model was natively pointing South)
-          getTranslation: [-1.2, 0, 0], // Shift the visual model left by 1.2 units to fix off-center origin in the .glb file
-          sizeScale: 20, // Increased size because this new model has a different native scale
-          _lighting: 'pbr', // Restored PBR lighting so textures and materials render correctly!
-          onClick: (info: any) => { if (info.object) setSelectedBus(info.object); },
-          transitions: {
-            getPosition: { duration: 1000, easing: (t: number) => t }
-            // Removed getOrientation transition to prevent 180-degree gimbal lock bugs when turning around
-          }
-        })
-      : new IconLayer({
-          id: 'buses-layer',
-      data: buses,
-      pickable: true,
-      onClick: (info: any) => { if (info.object) setSelectedBus(info.object); },
-      iconAtlas: NAV_ICON_URL,
-      iconMapping: {
-        bus: { x: 0, y: 0, width: 64, height: 64, anchorX: 32, anchorY: 32 }
-      },
-      getIcon: () => 'bus',
-      sizeScale: 1,
-      getPosition: (d) => [d.longitude, d.latitude],
-      getSize: () => 40,
-      getColor: (d) => d.status === 'SEARCHING' ? [245, 158, 11] : [59, 130, 246], // Amber if searching, else blue
-      getAngle: (d) => -d.heading,
-      transitions: {
-        getPosition: {
-          duration: 1000,
-          easing: (t: number) => t
-        },
-        getAngle: {
-          duration: 1000,
-          easing: (t: number) => t
+  const layers: any[] = [];
+
+  if (is3DMode) {
+    // Ground contact shadow underneath 3D buses to anchor them to the asphalt
+    layers.push(
+      new ScatterplotLayer({
+        id: 'buses-shadow-layer',
+        data: buses,
+        pickable: false,
+        getPosition: (d: any) => [d.longitude, d.latitude, 0],
+        getRadius: 14,
+        radiusMinPixels: 8,
+        radiusMaxPixels: 20,
+        getFillColor: [15, 23, 42, 130], // Deep ground contact shadow
+        transitions: {
+          getPosition: { duration: 1000, easing: (t: number) => t }
         }
-      }
-    }),
+      }),
+      // Forward Edge AI Sensor Light Cone (showing camera scanning the road ahead)
+      new ScatterplotLayer({
+        id: 'buses-fov-layer',
+        data: buses,
+        pickable: false,
+        getPosition: (d: any) => {
+          const rad = (d.heading * Math.PI) / 180;
+          const deltaLat = (14 / 111320) * Math.cos(rad);
+          const deltaLon = (14 / (111320 * Math.cos((d.latitude * Math.PI) / 180))) * Math.sin(rad);
+          return [d.longitude + deltaLon, d.latitude + deltaLat, 0.3];
+        },
+        getRadius: 14,
+        radiusMinPixels: 8,
+        radiusMaxPixels: 22,
+        getFillColor: [56, 189, 248, 55], // Luminous cyan perception sweep
+        transitions: {
+          getPosition: { duration: 1000, easing: (t: number) => t }
+        }
+      }),
+      // Bold, clearly visible 3D Bus running flat on the asphalt (Roll 90 keeps wheels grounded)
+      new ScenegraphLayer({
+        id: 'buses-3d-layer',
+        data: buses,
+        pickable: true,
+        scenegraph: '/scene.glb',
+        getPosition: (d: any) => [d.longitude, d.latitude, 0],
+        getOrientation: (d: any) => [0, -d.heading + 180, 90], // Roll 90 grounds the wheels flat on the road surface
+        getTranslation: [-1.2, 0, 0], // Center pivot
+        sizeScale: 10.5, // Perfectly visible, bold 3D bus scale
+        _lighting: 'pbr',
+        onClick: (info: any) => { if (info.object) setSelectedBus(info.object); },
+        transitions: {
+          getPosition: { duration: 1000, easing: (t: number) => t }
+        }
+      })
+    );
+  } else {
+    layers.push(
+      new IconLayer({
+        id: 'buses-layer',
+        data: buses,
+        pickable: true,
+        onClick: (info: any) => { if (info.object) setSelectedBus(info.object); },
+        iconAtlas: NAV_ICON_URL,
+        iconMapping: {
+          bus: { x: 0, y: 0, width: 64, height: 64, anchorX: 32, anchorY: 32 }
+        },
+        getIcon: () => 'bus',
+        sizeScale: 1,
+        getPosition: (d: any) => [d.longitude, d.latitude],
+        getSize: () => 36,
+        getColor: (d: any) => d.status === 'SEARCHING' ? [245, 158, 11] : [15, 82, 186],
+        getAngle: (d: any) => -d.heading,
+        transitions: {
+          getPosition: { duration: 1000, easing: (t: number) => t },
+          getAngle: { duration: 1000, easing: (t: number) => t }
+        }
+      })
+    );
+  }
+
+  // 3D Holographic Hazard Beacons (Vertical Laser Light Pillars anchored to the asphalt)
+  if (is3DMode) {
+    layers.push(
+      // Vertical laser guide beam from asphalt up to the floating beacon pin
+      new PathLayer({
+        id: 'events-beacon-pillar-layer',
+        data: events,
+        pickable: false,
+        widthScale: 1,
+        widthMinPixels: 2,
+        widthMaxPixels: 4,
+        jointRounded: true,
+        capRounded: true,
+        getPath: (d: any) => [
+          [d.longitude, d.latitude, 0],
+          [d.longitude, d.latitude, 26]
+        ],
+        getColor: (d: any) => d.severity === 'HIGH' ? [239, 68, 68, 220] : [245, 158, 11, 220],
+        getWidth: () => 2.5
+      }),
+      // Ground contact warning pulse circle marking exact defect location on the asphalt
+      new ScatterplotLayer({
+        id: 'events-ground-pulse-layer',
+        data: events,
+        pickable: false,
+        getPosition: (d: any) => [d.longitude, d.latitude, 0.4],
+        getRadius: 12,
+        radiusMinPixels: 7,
+        radiusMaxPixels: 18,
+        stroked: true,
+        filled: true,
+        lineWidthMinPixels: 2,
+        getFillColor: (d: any) => d.severity === 'HIGH' ? [239, 68, 68, 70] : [245, 158, 11, 70],
+        getLineColor: (d: any) => d.severity === 'HIGH' ? [239, 68, 68, 240] : [245, 158, 11, 240],
+      })
+    );
+  }
+
+  // Event marker pin (elevated to top of beacon pillar in 3D mode)
+  layers.push(
     new IconLayer({
       id: 'events-layer',
       data: events,
@@ -111,10 +425,10 @@ export default function CityMap() {
         marker: { x: 0, y: 0, width: 128, height: 128, mask: true }
       },
       getIcon: () => 'marker',
-      sizeScale: 15,
-      getPosition: (d) => [d.longitude, d.latitude],
-      getSize: () => 2,
-      getColor: (d) => d.severity === 'HIGH' ? [239, 68, 68] : (d.severity === 'MEDIUM' ? [245, 158, 11] : [16, 185, 129])
+      sizeScale: 16,
+      getPosition: (d: any) => [d.longitude, d.latitude, is3DMode ? 28 : 0],
+      getSize: () => 2.2,
+      getColor: (d: any) => d.severity === 'HIGH' ? [239, 68, 68] : (d.severity === 'MEDIUM' ? [245, 158, 11] : [16, 185, 129])
     }),
     new PathLayer({
       id: 'segments-glow-layer',
@@ -122,14 +436,14 @@ export default function CityMap() {
       pickable: false,
       widthScale: 1,
       widthMinPixels: 8,
-      widthMaxPixels: 15,
+      widthMaxPixels: 16,
       jointRounded: true,
       capRounded: true,
-      getPath: d => d.path,
-      getColor: d => {
-        if (d.healthScore > 80) return [16, 185, 129, 40]; // Green glow
-        if (d.healthScore > 50) return [245, 158, 11, 40]; // Amber glow
-        return [239, 68, 68, 40]; // Red glow
+      getPath: (d: any) => is3DMode ? d.path.map((p: any) => [p[0], p[1], 0.8]) : d.path,
+      getColor: (d: any) => {
+        if (d.healthScore > 80) return [16, 185, 129, 60]; // Green glow
+        if (d.healthScore > 50) return [245, 158, 11, 60]; // Amber glow
+        return [239, 68, 68, 60]; // Red glow
       },
       getWidth: () => 10
     }),
@@ -138,22 +452,19 @@ export default function CityMap() {
       data: segments,
       pickable: true,
       widthScale: 1,
-      widthMinPixels: 2,
-      widthMaxPixels: 5,
+      widthMinPixels: 3,
+      widthMaxPixels: 6,
       jointRounded: true,
       capRounded: true,
-      getPath: d => d.path,
-      getColor: d => {
-        if (d.healthScore > 80) return [16, 185, 129, 200]; // Green core
-        if (d.healthScore > 50) return [245, 158, 11, 200]; // Amber core
-        return [239, 68, 68, 200]; // Red core
+      getPath: (d: any) => is3DMode ? d.path.map((p: any) => [p[0], p[1], 1.2]) : d.path,
+      getColor: (d: any) => {
+        if (d.healthScore > 80) return [16, 185, 129, 230]; // Green core
+        if (d.healthScore > 50) return [245, 158, 11, 230]; // Amber core
+        return [239, 68, 68, 230]; // Red core
       },
-      getWidth: () => 3
+      getWidth: () => 3.5
     })
-  ];
-
-  // Temporarily removed the placeholder GeoJson building layer 
-  // as it may have been causing WebGL crashes due to invalid geometry types.
+  );
 
   if (activeIncident && activeIncident.active) {
     layers.push(
@@ -168,8 +479,8 @@ export default function CityMap() {
         radiusMinPixels: 1,
         radiusMaxPixels: 10000,
         lineWidthMinPixels: 2,
-        getPosition: d => [d.longitude, d.latitude],
-        getRadius: d => d.radius, // in km
+        getPosition: (d: any) => [d.longitude, d.latitude, 0],
+        getRadius: (d: any) => d.radius, // in km
         getFillColor: [239, 68, 68, 30], // transparent red
         getLineColor: [239, 68, 68, 200],
         transitions: {
@@ -210,27 +521,156 @@ export default function CityMap() {
           }}
           onLoad={(e) => {
             const map = e.target;
-            if (!map.getSource('openmaptiles')) {
-              map.addSource('openmaptiles', {
-                type: 'vector',
-                url: 'https://api.protomaps.com/tiles/v3.json?key=1003762824b9687f' // public demo key
+            mapRef.current = map;
+
+            // 1. Add ESRI High-Resolution Satellite Raster Source
+            if (!map.getSource('esri-satellite')) {
+              map.addSource('esri-satellite', {
+                type: 'raster',
+                tiles: [
+                  'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
+                ],
+                tileSize: 256,
+                maxzoom: 19
               });
+            }
+
+            // 2. Add Satellite Layer directly below 3D buildings
+            if (!map.getLayer('satellite-layer')) {
               map.addLayer({
-                id: '3d-buildings',
-                source: 'openmaptiles',
-                'source-layer': 'buildings',
-                type: 'fill-extrusion',
+                id: 'satellite-layer',
+                type: 'raster',
+                source: 'esri-satellite',
+                layout: {
+                  visibility: is3DMode ? 'visible' : 'none'
+                },
                 paint: {
-                  'fill-extrusion-color': '#E2E8F0', // Frosted silver for light theme
-                  'fill-extrusion-height': ['get', 'height'],
-                  'fill-extrusion-base': 0,
-                  'fill-extrusion-opacity': 0.75,
+                  'raster-opacity': 1.0,
+                  'raster-fade-duration': 300
                 }
               });
+            }
+
+            // 3. Vector building layers initialized directly with active theme
+            const initialCfg = BUILDING_THEMES[buildingTheme] || BUILDING_THEMES['smoked-glass'];
+
+            if (!map.getLayer('3d-buildings') && map.getSource('protomaps')) {
+              // Blueprint footprint outline grounding the buildings to the street
+              map.addLayer({
+                id: '3d-buildings-outline',
+                source: 'protomaps',
+                'source-layer': 'buildings',
+                type: 'line',
+                layout: {
+                  'visibility': is3DMode ? 'visible' : 'none'
+                },
+                paint: {
+                  'line-color': initialCfg.outlineColor,
+                  'line-width': initialCfg.outlineWidth,
+                  'line-opacity': initialCfg.outlineOpacity
+                }
+              });
+
+              // Procedural 3D Building Extrusion with architectural depth & sun shading
+              map.addLayer({
+                id: '3d-buildings',
+                source: 'protomaps',
+                'source-layer': 'buildings',
+                type: 'fill-extrusion',
+                layout: {
+                  'visibility': is3DMode && buildingTheme !== 'pure-satellite' ? 'visible' : 'none'
+                },
+                paint: {
+                  'fill-extrusion-color': initialCfg.fillColor,
+                  'fill-extrusion-height': initialCfg.height,
+                  'fill-extrusion-base': 0,
+                  'fill-extrusion-opacity': initialCfg.opacity
+                }
+              });
+
+              // Initial light direction
+              if (typeof map.setLight === 'function') {
+                if (is3DMode) {
+                  map.setLight({
+                    anchor: 'map',
+                    position: [1.5, 210, 32],
+                    color: initialCfg.lightColor,
+                    intensity: initialCfg.lightIntensity
+                  });
+                } else {
+                  map.setLight({
+                    anchor: 'viewport',
+                    position: [1.15, 210, 30],
+                    color: '#FFFFFF',
+                    intensity: 0.25
+                  });
+                }
+              }
+
+              // Initial atmospheric sky fog
+              if (typeof (map as any).setFog === 'function') {
+                if (is3DMode) {
+                  (map as any).setFog({
+                    range: [0.5, 12],
+                    color: '#d0e2ff',
+                    'high-color': '#1d4ed8',
+                    'space-color': '#0f172a',
+                    'horizon-blend': 0.18
+                  });
+                } else {
+                  (map as any).setFog(null);
+                }
+              }
             }
           }}
         />
       </DeckGL>
+
+      {/* 3D Digital Twin Architectural Style Selector Pill (Collapsible with Arrow Toggle) */}
+      {is3DMode && (
+        <div className="absolute top-4 left-4 z-40 flex items-center bg-white/95 backdrop-blur-md border border-gray-200/90 shadow-xl rounded-xl p-1.5 space-x-1 transition-all duration-300">
+          <button
+            onClick={() => setIsStyleMenuOpen(!isStyleMenuOpen)}
+            className="flex items-center space-x-1.5 px-2 py-1 text-[11px] font-bold text-gray-700 hover:text-black uppercase tracking-wider select-none rounded-lg hover:bg-gray-100/80 transition-colors cursor-pointer"
+            title={isStyleMenuOpen ? "Collapse 3D Style Menu" : "Expand 3D Style Menu"}
+          >
+            <span className="w-2 h-2 rounded-full bg-accent animate-pulse"></span>
+            <span>Twin Style</span>
+            {isStyleMenuOpen ? (
+              <ChevronLeft size={14} className="text-gray-500 hover:text-gray-900 transition-transform" />
+            ) : (
+              <div className="flex items-center space-x-1.5">
+                <span className="text-[10px] text-accent font-semibold lowercase bg-accent/10 px-1.5 py-0.5 rounded">
+                  {BUILDING_THEMES[buildingTheme]?.badge || ''}
+                </span>
+                <ChevronRight size={14} className="text-gray-500 hover:text-gray-900 transition-transform" />
+              </div>
+            )}
+          </button>
+
+          {isStyleMenuOpen && (
+            <div className="flex items-center space-x-1 border-l border-gray-200/80 pl-1.5 animate-in fade-in slide-in-from-left-2 duration-200">
+              {(['smoked-glass', 'slate-architectural', 'cyber-cyan', 'pure-satellite'] as BuildingTheme[]).map((themeKey) => {
+                const cfg = BUILDING_THEMES[themeKey];
+                const isActive = buildingTheme === themeKey;
+                return (
+                  <button
+                    key={themeKey}
+                    onClick={() => setBuildingTheme(themeKey)}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all duration-200 cursor-pointer ${
+                      isActive
+                        ? 'bg-accent text-white shadow-md shadow-accent/30 font-bold scale-[1.02]'
+                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                    }`}
+                  >
+                    {cfg.badge}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Custom Projected Popup Overlay (guarantees clickability above DeckGL) */}
       {selectedEvent && (
