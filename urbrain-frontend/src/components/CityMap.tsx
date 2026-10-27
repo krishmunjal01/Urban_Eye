@@ -774,13 +774,25 @@ export default function CityMap() {
                           Cancel
                         </button>
                         <button
-                          onClick={(e) => {
+                          onClick={async (e) => {
                             e.stopPropagation();
                             setDispatchState('loading');
-                            // Simulate API call, then show success
+                            
+                            // Log dispatch event to central SQLite database
+                            try {
+                              fetch('http://localhost:8000/api/db/dispatch', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                  eventId: selectedEvent.id,
+                                  corridor: selectedEvent.busId ? `${selectedEvent.busId} Route` : 'Madhya Marg Corridor',
+                                  etaMinutes: 12
+                                })
+                              }).catch(() => {});
+                            } catch (_) {}
+
                             setTimeout(() => {
                               setDispatchState('success');
-                              // Auto-close after success
                               setTimeout(() => {
                                 setDispatchState('idle');
                                 setSelectedEvent(null);

@@ -51,6 +51,9 @@ ensure_dependencies()
 import time
 import socket
 import threading
+import sqlite3
+import base64
+from datetime import datetime
 import requests
 import cv2
 from flask import Flask, Response
@@ -59,6 +62,32 @@ try:
     from flask_cors import CORS
 except ImportError:
     CORS = None
+
+# Local Edge SQLite Buffer Configuration
+EDGE_DB_PATH = os.path.join(os.path.dirname(__file__), "edge_detections.db")
+CAPTURES_LOCAL_DIR = os.path.join(os.path.dirname(__file__), "captures")
+os.makedirs(CAPTURES_LOCAL_DIR, exist_ok=True)
+
+def init_edge_db():
+    """Initializes offline SQLite buffer on the edge device."""
+    try:
+        with sqlite3.connect(EDGE_DB_PATH) as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS edge_pothole_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    bus_id TEXT,
+                    label TEXT,
+                    confidence INTEGER,
+                    snapshot_path TEXT,
+                    synced_to_cloud INTEGER DEFAULT 0,
+                    timestamp TEXT
+                )
+            """)
+            conn.commit()
+    except Exception as e:
+        print(f"[EDGE DB] Warning: {e}")
+
+init_edge_db()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 2. INTELLIGENT MODEL RESOLUTION
@@ -105,8 +134,9 @@ MODEL_PATH, MODEL_DESC = resolve_model_path()
 BACKEND_URL = os.environ.get("URBAN_EYE_BACKEND", "https://sih-2026-pqbo.onrender.com")
 
 # Hazard confidence threshold and cooldown (seconds)
-HAZARD_CONF_THRESHOLD = 70
-ALERT_COOLDOWN_SEC = 5.0
+# Lowered from 70 to 40 so detections like 'pothole 0.44' get saved to DB!
+HAZARD_CONF_THRESHOLD = int(os.environ.get("HAZARD_CONF_THRESHOLD", "40"))
+ALERT_COOLDOWN_SEC = float(os.environ.get("ALERT_COOLDOWN_SEC", "3.0"))
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 3. SMART CAMERA AUTO-SELECTOR (DROIDCAM / PHONE vs LAPTOP WEBCAM)
@@ -266,7 +296,8 @@ def yolo_worker():
                     now = time.time()
                     if is_hazard and conf >= HAZARD_CONF_THRESHOLD and (now - last_alert_time) > ALERT_COOLDOWN_SEC:
                         last_alert_time = now
-                        threading.Thread(target=fire_hazard_event, args=(label, conf), daemon=True).start()
+                        frame_snapshot = annotated.copy()
+                        threading.Thread(target=fire_hazard_event, args=(label, conf, frame_snapshot), daemon=True).start()
 
                 # Post 10Hz bounding box telemetry
                 if detections:
@@ -281,22 +312,60 @@ def yolo_worker():
         # Maintain ~30 FPS
         time.sleep(0.015)
 
-def fire_hazard_event(label: str, confidence: int):
-    """Notify backend correlation engine of a verified road defect."""
+def fire_hazard_event(label: str, confidence: int, frame_snapshot=None):
+    """Saves evidence snapshot, records in edge SQLite buffer, and dispatches to central DB."""
     url = f"{BACKEND_URL}/api/events"
+    now_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+    snapshot_filename = f"pothole_{now_str}.jpg"
+    snapshot_path = os.path.join(CAPTURES_LOCAL_DIR, snapshot_filename)
+
+    b64_image = None
+    if frame_snapshot is not None:
+        try:
+            cv2.imwrite(snapshot_path, frame_snapshot)
+            ret, buf = cv2.imencode('.jpg', frame_snapshot, [cv2.IMWRITE_JPEG_QUALITY, 80])
+            if ret:
+                b64_image = base64.b64encode(buf).decode('utf-8')
+        except Exception as e:
+            print(f"[AI Node] Snapshot save warning: {e}")
+
+    # 1. Log to local Edge SQLite buffer
+    log_id = None
+    try:
+        with sqlite3.connect(EDGE_DB_PATH) as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                INSERT INTO edge_pothole_logs (bus_id, label, confidence, snapshot_path, synced_to_cloud, timestamp)
+                VALUES (?, ?, ?, ?, 0, ?)
+            """, ("BUS-001", label, confidence, snapshot_filename, datetime.now().isoformat()))
+            conn.commit()
+            log_id = cur.lastrowid
+        print(f"[EDGE DB] [SAVED] Stored defect in edge_detections.db (Log ID #{log_id})")
+    except Exception as e:
+        print(f"[EDGE DB] Local buffer error: {e}")
+
+    # 2. Dispatch to Central Cloud Ingestion Hub
     payload = {
         "busId": "BUS-001",
         "type": "POTHOLE",
         "latitude": 30.7333,
         "longitude": 76.7794,
         "confidence": confidence,
-        "severity": "HIGH"
+        "severity": "HIGH" if confidence >= 65 else ("MEDIUM" if confidence >= 45 else "LOW"),
+        "imageData": b64_image,
+        "imageUrl": f"/captures/{snapshot_filename}"
     }
+
     try:
-        print(f"[ALERT] 🚨 Verified Defect: {label} ({confidence}%) -> Cloud City Twin")
-        requests.post(url, json=payload, timeout=2.0)
-    except Exception:
-        pass
+        resp = requests.post(url, json=payload, timeout=2.5)
+        if resp.status_code == 200:
+            print(f"[ALERT] [SAVED] Verified Defect: {label} ({confidence}%) -> Saved to Central Database (200 OK)")
+            if log_id:
+                with sqlite3.connect(EDGE_DB_PATH) as conn:
+                    conn.execute("UPDATE edge_pothole_logs SET synced_to_cloud = 1 WHERE id = ?", (log_id,))
+                    conn.commit()
+    except Exception as e:
+        print(f"[EDGE DB] [BUFFERED] Cloud unreachable ({e}). Kept safely in local edge SQLite buffer.")
 
 def post_detections(detections: list):
     """Send live bounding boxes to dashboard WebSocket bridge."""

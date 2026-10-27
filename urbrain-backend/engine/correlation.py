@@ -56,7 +56,43 @@ class CorrelationEngine:
                 "healthScore": 60
             }
         ]
-        self._event_counter = 0
+        self._event_counter = 3
+        self._load_from_database()
+
+    def _load_from_database(self):
+        """Loads persistent history from SQLite on engine startup."""
+        try:
+            import database
+            database.init_db()
+            db_records = database.get_all_potholes(limit=100)
+            if db_records:
+                self.events = [
+                    {
+                        "id": r["eventId"],
+                        "type": r["type"],
+                        "latitude": r["latitude"],
+                        "longitude": r["longitude"],
+                        "confidence": r["confidence"],
+                        "severity": r["severity"],
+                        "busId": r["busId"],
+                        "timestamp": r["createdAt"],
+                        "status": r["status"],
+                        "verifyingBuses": r["verifyingBuses"],
+                        "imageUrl": r.get("imageUrl") or "/pothole1.jpeg"
+                    }
+                    for r in db_records
+                ]
+                # Sync event counter
+                ids = [
+                    int(e["id"].split("-")[1])
+                    for e in self.events
+                    if e["id"].startswith("EVT-") and len(e["id"].split("-")) > 1 and e["id"].split("-")[1].isdigit()
+                ]
+                if ids:
+                    self._event_counter = max(ids)
+                print(f"[ENGINE] [LOAD] Loaded {len(self.events)} defect records from SQLite database.")
+        except Exception as e:
+            print(f"[ENGINE] Database load warning: {e}")
 
     def update_bus_telemetry(self, telemetry: dict):
         """Update the latest position/state of a bus."""
@@ -94,11 +130,24 @@ class CorrelationEngine:
                 matched_event['status'] = 'VERIFIED'
                 # Degrade the nearest road segment's health
                 self._degrade_nearest_segment(matched_event['latitude'], matched_event['longitude'])
+
+                # Persist verified state to database
+                try:
+                    import database
+                    database.update_pothole_verification(
+                        matched_event['id'],
+                        matched_event['verifyingBuses'],
+                        status='VERIFIED'
+                    )
+                except Exception as err:
+                    print(f"[ENGINE] DB update error: {err}")
         else:
             # New event — mark as PENDING until another bus confirms it
             self._event_counter += 1
+            new_event_id = f"EVT-{self._event_counter:04d}"
+            image_url = event.get('imageUrl') or event.get('imagePath') or "/pothole1.jpeg"
             new_event = {
-                "id": f"EVT-{self._event_counter:04d}",
+                "id": new_event_id,
                 "type": event['type'],
                 "latitude": event['latitude'],
                 "longitude": event['longitude'],
@@ -107,9 +156,30 @@ class CorrelationEngine:
                 "busId": event['busId'],
                 "timestamp": event.get('timestamp', datetime.now().isoformat()),
                 "status": "PENDING",
-                "verifyingBuses": [event['busId']]
+                "verifyingBuses": [event['busId']],
+                "imageUrl": image_url
             }
             self.events.append(new_event)
+
+            # Persist new detection to SQLite database
+            try:
+                import database
+                database.save_pothole_detection(
+                    event_id=new_event_id,
+                    bus_id=event['busId'],
+                    defect_type=event['type'],
+                    confidence=event.get('confidence', 90),
+                    severity=event.get('severity', 'MEDIUM'),
+                    latitude=event['latitude'],
+                    longitude=event['longitude'],
+                    image_url=image_url,
+                    status="PENDING",
+                    verifying_buses=[event['busId']],
+                    created_at=new_event['timestamp']
+                )
+                print(f"[DATABASE] [SAVED] Pothole saved: {new_event_id} ({event['type']} {new_event['confidence']}%)")
+            except Exception as err:
+                print(f"[ENGINE] DB insert error: {err}")
 
             # Keep event list manageable
             if len(self.events) > 200:
@@ -140,6 +210,11 @@ class CorrelationEngine:
 
         if nearest_seg and min_dist < 3.0:  # Within 3km
             nearest_seg['healthScore'] = max(10, nearest_seg['healthScore'] - 5)
+            try:
+                import database
+                database.log_corridor_health(nearest_seg['id'], nearest_seg['name'], nearest_seg['healthScore'])
+            except Exception:
+                pass
 
     def get_all_buses(self) -> Dict[str, dict]:
         """Return all known bus states."""

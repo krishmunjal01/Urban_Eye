@@ -12,7 +12,7 @@ import IncidentLogPanel from './components/panels/IncidentLogPanel';
 import CameraMatrixPanel from './components/panels/CameraMatrixPanel';
 import ToastNotification from './components/panels/ToastNotification';
 import StreamSettingsModal from './components/panels/StreamSettingsModal';
-import { LayoutDashboard, Bus, Map as MapIcon, Route, ShieldAlert, ChevronRight, ChevronLeft, Activity, Settings } from 'lucide-react';
+import { LayoutDashboard, Bus, Map as MapIcon, Route, ShieldAlert, ChevronRight, ChevronLeft, Activity, Settings, Database } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 // const SOCKET_URL = 'http://localhost:8000';
@@ -93,6 +93,12 @@ function App() {
             <div className="flex items-center space-x-2">
               <span className={`w-2 h-2 rounded-full ${isConnected ? 'bg-healthy animate-pulse' : 'bg-critical'}`}></span>
               <span className="text-gray-500">NETWORK {isConnected ? '98.4%' : 'OFFLINE'}</span>
+            </div>
+
+            {/* Database Persistence Status Badge */}
+            <div className="flex items-center space-x-1.5 px-2.5 py-1 rounded-md bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-semibold">
+              <Database size={13} className="text-emerald-600 animate-pulse" />
+              <span>SQLITE 3 LIVE</span>
             </div>
             
             <div className="flex items-center space-x-2">
