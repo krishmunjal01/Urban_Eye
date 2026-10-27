@@ -72,6 +72,10 @@ interface UrbrainState {
   is3DMode: boolean;
   viewState: ViewState;
   demoToast: DemoToast | null;
+  isLiveMode: boolean;
+  liveStreamUrl: string;
+  liveWsUrl: string;
+  isSettingsOpen: boolean;
   setBuses: (buses: Bus[]) => void;
   setEvents: (events: Event[]) => void;
   setSegments: (segments: RoadSegment[]) => void;
@@ -82,6 +86,10 @@ interface UrbrainState {
   set3DMode: (status: boolean) => void;
   setViewState: (viewState: ViewState) => void;
   setDemoToast: (toast: DemoToast | null) => void;
+  setLiveMode: (status: boolean) => void;
+  setLiveStreamUrl: (url: string) => void;
+  setLiveWsUrl: (url: string) => void;
+  setSettingsOpen: (open: boolean) => void;
 }
 
 export const useUrbrainStore = create<UrbrainState>((set) => ({
@@ -94,6 +102,10 @@ export const useUrbrainStore = create<UrbrainState>((set) => ({
   isConnected: false,
   is3DMode: false,
   demoToast: null,
+  isLiveMode: false,
+  liveStreamUrl: typeof window !== 'undefined' ? (localStorage.getItem('urbaneye_stream_url') || 'http://localhost:5000/video_feed') : 'http://localhost:5000/video_feed',
+  liveWsUrl: typeof window !== 'undefined' ? (localStorage.getItem('urbaneye_ws_url') || 'wss://sih-2026-pqbo.onrender.com/ws/detections') : 'wss://sih-2026-pqbo.onrender.com/ws/detections',
+  isSettingsOpen: false,
   viewState: {
     longitude: 76.7794,
     latitude: 30.7333,
@@ -111,4 +123,14 @@ export const useUrbrainStore = create<UrbrainState>((set) => ({
   set3DMode: (status) => set({ is3DMode: status }),
   setViewState: (viewState) => set({ viewState }),
   setDemoToast: (toast) => set({ demoToast: toast }),
+  setLiveMode: (status) => set({ isLiveMode: status }),
+  setLiveStreamUrl: (url) => {
+    if (typeof window !== 'undefined') localStorage.setItem('urbaneye_stream_url', url);
+    set({ liveStreamUrl: url });
+  },
+  setLiveWsUrl: (url) => {
+    if (typeof window !== 'undefined') localStorage.setItem('urbaneye_ws_url', url);
+    set({ liveWsUrl: url });
+  },
+  setSettingsOpen: (open) => set({ isSettingsOpen: open }),
 }));

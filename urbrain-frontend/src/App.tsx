@@ -11,7 +11,8 @@ import InfrastructurePanel from './components/panels/InfrastructurePanel';
 import IncidentLogPanel from './components/panels/IncidentLogPanel';
 import CameraMatrixPanel from './components/panels/CameraMatrixPanel';
 import ToastNotification from './components/panels/ToastNotification';
-import { LayoutDashboard, Bus, Map as MapIcon, Route, ShieldAlert, ChevronRight, ChevronLeft, Activity } from 'lucide-react';
+import StreamSettingsModal from './components/panels/StreamSettingsModal';
+import { LayoutDashboard, Bus, Map as MapIcon, Route, ShieldAlert, ChevronRight, ChevronLeft, Activity, Settings } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 // const SOCKET_URL = 'http://localhost:8000';
@@ -23,6 +24,11 @@ function App() {
   const isConnected = useUrbrainStore(state => state.isConnected);
   const is3DMode = useUrbrainStore(state => state.is3DMode);
   const set3DMode = useUrbrainStore(state => state.set3DMode);
+  const isLiveMode = useUrbrainStore(state => state.isLiveMode);
+  const setLiveMode = useUrbrainStore(state => state.setLiveMode);
+  const setSettingsOpen = useUrbrainStore(state => state.setSettingsOpen);
+  const setSelectedBus = useUrbrainStore(state => state.setSelectedBus);
+  const setDemoToast = useUrbrainStore(state => state.setDemoToast);
   const viewState = useUrbrainStore(state => state.viewState);
   const setViewState = useUrbrainStore(state => state.setViewState);
   const activeIncident = useUrbrainStore(state => state.activeIncident);
@@ -99,7 +105,59 @@ function App() {
               <span className="text-gray-500 text-xs uppercase">Alerts</span>
             </div>
 
-            <div className="w-px h-6 bg-gray-700 mx-2"></div>
+            <div className="w-px h-6 bg-gray-300 mx-1"></div>
+
+            {/* Hardware Stream / Simulation Switcher */}
+            <div className="flex items-center bg-gray-200/70 p-0.5 rounded-lg border border-gray-300">
+              <button
+                type="button"
+                onClick={() => {
+                  setLiveMode(false);
+                  setDemoToast({
+                    id: Date.now(),
+                    type: 'verify',
+                    message: '🎮 Switched to SIMULATION MODE · 12 Corridor Buses active'
+                  });
+                }}
+                className={`flex items-center space-x-1.5 px-2.5 py-1 rounded-md text-xs font-bold transition-all cursor-pointer ${
+                  !isLiveMode 
+                    ? 'bg-white text-gray-900 shadow-sm' 
+                    : 'text-gray-500 hover:text-gray-800'
+                }`}
+              >
+                <span>🎮 SIMULATION</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setLiveMode(true);
+                  if (buses.length > 0) setSelectedBus(buses[0]);
+                  setDemoToast({
+                    id: Date.now(),
+                    type: 'detect',
+                    message: '🛰️ Switched to LIVE EDGE NODE · Connected to Rishi\'s YOLO11 feed'
+                  });
+                }}
+                className={`flex items-center space-x-1.5 px-2.5 py-1 rounded-md text-xs font-bold transition-all cursor-pointer ${
+                  isLiveMode 
+                    ? 'bg-rose-600 text-white shadow-sm' 
+                    : 'text-gray-500 hover:text-gray-800'
+                }`}
+              >
+                <span className={`w-1.5 h-1.5 rounded-full ${isLiveMode ? 'bg-white animate-pulse' : 'bg-rose-500'}`}></span>
+                <span>🔴 LIVE NODE</span>
+              </button>
+            </div>
+
+            {/* Stream Settings Button */}
+            <button
+              type="button"
+              onClick={() => setSettingsOpen(true)}
+              title="Configure Edge AI Stream IP & WebSocket"
+              className="p-1.5 rounded-md border border-gray-200 bg-white hover:bg-gray-100 text-gray-600 hover:text-gray-900 transition-colors cursor-pointer shadow-sm"
+            >
+              <Settings size={15} />
+            </button>
             
             <button 
               onClick={() => {
@@ -172,6 +230,9 @@ function App() {
 
           {/* Global toast — rendered outside the map div so it sits above everything */}
           <ToastNotification />
+
+          {/* Stream Settings Configuration Modal */}
+          <StreamSettingsModal />
 
       </main>
     </div>
