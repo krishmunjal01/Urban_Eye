@@ -18,41 +18,40 @@ export default function StreamSettingsModal() {
 
   if (!isSettingsOpen) return null;
 
-  const handleTestConnection = () => {
+  const handleTestConnection = async () => {
     setTestStatus('testing');
     setTestMessage('Pinging video stream...');
 
-    const img = new Image();
-    const timeout = setTimeout(() => {
-      img.src = '';
-      setTestStatus('error');
-      setTestMessage('Connection timed out. Check IP and port 5000.');
-    }, 4000);
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3500);
 
-    img.onload = () => {
-      clearTimeout(timeout);
+      // Derive base server endpoint for immediate response
+      let pingUrl = streamInput.trim();
+      try {
+        const parsed = new URL(pingUrl);
+        pingUrl = `${parsed.protocol}//${parsed.host}/`;
+      } catch {
+        pingUrl = streamInput.trim();
+      }
+
+      await fetch(pingUrl, { 
+        method: 'GET',
+        signal: controller.signal,
+        mode: 'no-cors'
+      });
+      
+      clearTimeout(timeoutId);
       setTestStatus('success');
       setTestMessage('Stream is active and reachable! 30 FPS ready.');
-    };
-
-    img.onerror = () => {
-      clearTimeout(timeout);
-      // MJPEG streams sometimes trigger onerror in Image element on certain browsers while still streaming;
-      // perform a quick fetch check as fallback:
-      fetch(streamInput, { mode: 'no-cors' })
-        .then(() => {
-          setTestStatus('success');
-          setTestMessage('Stream endpoint responded successfully!');
-        })
-        .catch(() => {
-          setTestStatus('error');
-          setTestMessage('Cannot reach stream. Make sure Python edge node is running.');
-        });
-    };
-
-    // Append timestamp to bypass caching
-    const url = streamInput.includes('?') ? `${streamInput}&_t=${Date.now()}` : `${streamInput}?_t=${Date.now()}`;
-    img.src = url;
+    } catch (err: any) {
+      setTestStatus('error');
+      setTestMessage(
+        err.name === 'AbortError' 
+          ? 'Connection timed out. Check IP and port 5000.' 
+          : 'Cannot reach stream. Make sure Rishi is running urban_eye_edge.py.'
+      );
+    }
   };
 
   const handleSave = () => {
